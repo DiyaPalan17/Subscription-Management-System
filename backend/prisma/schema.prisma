@@ -1,0 +1,304 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  STAFF
+  CUSTOMER
+}
+
+enum ProductType {
+  SOFTWARE
+  ADDON
+  SERVICE
+}
+
+enum BillingCadence {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  DRAFT
+  QUOTATION
+  CONFIRMED
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+enum DiscountScope {
+  SUBSCRIPTION
+  PRODUCT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  CONFIRMED
+  PAID
+  CANCELLED
+  OVERDUE
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CARD
+  UPI
+  MANUAL
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  role          Role           @default(CUSTOMER)
+  name          String
+  phone         String?
+  companyName   String?        @map("company_name")
+  address       String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  resetTokens   PasswordResetToken[]
+
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+model Product {
+  id          String            @id @default(uuid())
+  name        String
+  type        ProductType       @default(SOFTWARE)
+  salesPrice  Float             @map("sales_price")
+  costPrice   Float             @map("cost_price")
+  notes       String?
+  isActive    Boolean           @default(true) @map("is_active")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  variants    ProductVariant[]
+  subLines    SubscriptionLine[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id              String   @id @default(uuid())
+  productId       String   @map("product_id")
+  name            String
+  value           String
+  priceAdjustment Float    @default(0) @map("price_adjustment")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  product  Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  subLines SubscriptionLine[]
+
+  @@map("product_variants")
+}
+
+model Plan {
+  id                 String         @id @default(uuid())
+  name               String
+  billingCadence     BillingCadence @map("billing_cadence")
+  basePrice          Float          @map("base_price")
+  minQuantity        Int            @default(1) @map("min_quantity")
+  startDate          DateTime       @map("start_date")
+  endDate            DateTime?      @map("end_date")
+  autoCloseOnExpiry  Boolean        @default(true) @map("auto_close_on_expiry")
+  allowEarlyClose    Boolean        @default(true) @map("allow_early_close")
+  allowPause         Boolean        @default(true) @map("allow_pause")
+  allowRenewal       Boolean        @default(true) @map("allow_renewal")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  subscriptions      Subscription[]
+  quotationTemplates QuotationTemplate[]
+
+  @@map("plans")
+}
+
+model QuotationTemplate {
+  id            String   @id @default(uuid())
+  name          String
+  defaultPlanId String?  @map("default_plan_id")
+  validityDays  Int      @default(30) @map("validity_days")
+  templateLines Json     @map("template_lines")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  defaultPlan Plan? @relation(fields: [defaultPlanId], references: [id])
+
+  @@map("quotation_templates")
+}
+
+model TaxRule {
+  id             String             @id @default(uuid())
+  name           String
+  ratePercentage Float              @map("rate_percentage")
+  isActive       Boolean            @default(true) @map("is_active")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  subLines       SubscriptionLine[]
+
+  @@map("tax_rules")
+}
+
+model DiscountRule {
+  id              String        @id @default(uuid())
+  code            String        @unique
+  type            DiscountType
+  value           Float
+  targetScope     DiscountScope @map("target_scope")
+  targetProductId String?       @map("target_product_id")
+  minSpend        Float         @default(0) @map("min_spend")
+  minQuantity     Int           @default(0) @map("min_quantity")
+  maxRedemptions  Int?          @map("max_redemptions")
+  timesRedeemed   Int           @default(0) @map("times_redeemed")
+  startDate       DateTime?     @map("start_date")
+  endDate         DateTime?     @map("end_date")
+  isActive        Boolean       @default(true) @map("is_active")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  subscriptions   Subscription[]
+
+  @@map("discount_rules")
+}
+
+model Subscription {
+  id                 String             @id @default(uuid())
+  subscriptionNumber String             @unique @map("subscription_number")
+  customerId         String             @map("customer_id")
+  planId             String             @map("plan_id")
+  discountRuleId     String?            @map("discount_rule_id")
+  status             SubscriptionStatus @default(DRAFT)
+  startDate          DateTime           @map("start_date")
+  currentPeriodStart DateTime           @map("current_period_start")
+  currentPeriodEnd   DateTime           @map("current_period_end")
+  nextBillingDate    DateTime           @map("next_billing_date")
+  expiryDate         DateTime?          @map("expiry_date")
+  paymentTermsDays   Int                @default(15) @map("payment_terms_days")
+  validUntil         DateTime?          @map("valid_until")
+  notes              String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  customer     User               @relation(fields: [customerId], references: [id])
+  plan         Plan               @relation(fields: [planId], references: [id])
+  discountRule DiscountRule?      @relation(fields: [discountRuleId], references: [id])
+  lines        SubscriptionLine[]
+  invoices     Invoice[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([nextBillingDate])
+  @@map("subscriptions")
+}
+
+model SubscriptionLine {
+  id             String   @id @default(uuid())
+  subscriptionId String   @map("subscription_id")
+  productId      String   @map("product_id")
+  variantId      String?  @map("variant_id")
+  quantity       Int      @default(1)
+  unitPrice      Float    @map("unit_price")
+  taxRuleId      String?  @map("tax_rule_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  subscription Subscription    @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  product      Product         @relation(fields: [productId], references: [id])
+  variant      ProductVariant? @relation(fields: [variantId], references: [id])
+  taxRule      TaxRule?        @relation(fields: [taxRuleId], references: [id])
+
+  @@map("subscription_lines")
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  invoiceNumber  String        @unique @map("invoice_number")
+  subscriptionId String        @map("subscription_id")
+  customerId     String        @map("customer_id")
+  periodStart    DateTime      @map("period_start")
+  periodEnd      DateTime      @map("period_end")
+  status         InvoiceStatus @default(DRAFT)
+  subtotal       Float
+  discountAmount Float         @default(0) @map("discount_amount")
+  taxAmount      Float         @default(0) @map("tax_amount")
+  totalAmount    Float         @map("total_amount")
+  amountPaid     Float         @default(0) @map("amount_paid")
+  dueDate        DateTime      @map("due_date")
+  notes          String?
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  subscription Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  customer     User          @relation(fields: [customerId], references: [id])
+  lines        InvoiceLine[]
+  payments     Payment[]
+
+  @@unique([subscriptionId, periodStart], name: "subscription_period_start_unique")
+  @@index([status])
+  @@index([customerId])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String   @id @default(uuid())
+  invoiceId   String   @map("invoice_id")
+  description String
+  quantity    Int
+  unitPrice   Float    @map("unit_price")
+  taxAmount   Float    @default(0) @map("tax_amount")
+  lineTotal   Float    @map("line_total")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  invoiceId     String        @map("invoice_id")
+  paymentMethod PaymentMethod @default(MANUAL) @map("payment_method")
+  amount        Float
+  paymentDate   DateTime      @default(now()) @map("payment_date")
+  notes         String?
+  referenceId   String?       @map("reference_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
